@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Top input paper -->
+    <path
+        android:fillColor="#C7D2FE"
+        android:pathData="M36,26h36v14h-36z" />
+    <!-- Printer body -->
+    <path
+        android:fillColor="#EEF2FF"
+        android:pathData="M26,40h56v24h-56z" />
+    <!-- Green ready LED -->
+    <path
+        android:fillColor="#34D399"
+        android:pathData="M71,48a3,3 0 1,0 6,0a3,3 0 1,0 -6,0" />
+    <!-- Bottom output paper -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M35,56h38v26h-38z" />
+    <!-- Document text lines -->
+    <path
+        android:fillColor="#4F46E5"
+        android:pathData="M41,64h26v3h-26zM41,71h18v3h-18z" />
+</vector>

@@ -1,0 +1,20 @@
+# Dependencies & build outputs
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+mobile/.gradle/
+mobile/build/
+mobile/app/build/
+mobile/local.properties
+
+# OS & editor artifacts
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
+
+# Environment files
+.env
+.env.*
