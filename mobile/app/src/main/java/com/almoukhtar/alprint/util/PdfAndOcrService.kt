@@ -217,8 +217,8 @@ object PdfAndOcrService {
     }
 
     /**
-     * Returns the base portrait pixel dimensions (width x height) and PrintAttributes.MediaSize
-     * for a selected photo/document paper size.
+     * Returns the base pixel dimensions (width x height) for composing a sheet bitmap
+     * at ~150 DPI for a selected paper size and orientation.
      */
     fun getPaperDimensions(paperSize: String, landscape: Boolean): Pair<Int, Int> {
         val (baseW, baseH) = when (paperSize) {
@@ -226,20 +226,36 @@ object PdfAndOcrService {
             "5x7\"" -> 1250 to 1750      // 5:7 (1:1.40)
             "8x10\"" -> 1400 to 1750     // 8:10 (1:1.25)
             "Letter" -> 1275 to 1650     // 8.5:11 (1:1.294)
+            "Legal" -> 1275 to 2100      // 8.5:14 (1:1.647)
             else -> 1240 to 1754         // A4 210:297 (1:1.414)
         }
         return if (landscape) (baseH to baseW) else (baseW to baseH)
     }
 
+    /**
+     * Returns exact PDF PostScript points (72 pt/in) for Android PrintDocumentAdapter / PdfDocument.
+     */
+    fun getPaperPoints(paperSize: String, landscape: Boolean): Pair<Int, Int> {
+        val (baseW, baseH) = when (paperSize) {
+            "4x6\"" -> 288 to 432
+            "5x7\"" -> 360 to 504
+            "8x10\"" -> 576 to 720
+            "Letter" -> 612 to 792
+            "Legal" -> 612 to 1008
+            else -> 595 to 842
+        }
+        return if (landscape) (baseH to baseW) else (baseW to baseH)
+    }
+
     fun getPaperDimensionsLabel(paperSize: String, landscape: Boolean): String {
-        val dims = when (paperSize) {
+        return when (paperSize) {
             "4x6\"" -> if (landscape) "6 × 4 in (152 × 102 mm)" else "4 × 6 in (102 × 152 mm)"
             "5x7\"" -> if (landscape) "7 × 5 in (178 × 127 mm)" else "5 × 7 in (127 × 178 mm)"
             "8x10\"" -> if (landscape) "10 × 8 in (254 × 203 mm)" else "8 × 10 in (203 × 254 mm)"
             "Letter" -> if (landscape) "11 × 8.5 in (279 × 216 mm)" else "8.5 × 11 in (216 × 279 mm)"
+            "Legal" -> if (landscape) "14 × 8.5 in (356 × 216 mm)" else "8.5 × 14 in (216 × 356 mm)"
             else -> if (landscape) "297 × 210 mm (A4)" else "210 × 297 mm (A4)"
         }
-        return dims
     }
 
     /**
@@ -295,7 +311,8 @@ object PdfAndOcrService {
         scalePercent: Int = 100,
         fitMode: String = "fit", // "fit" or "fill"
         landscape: Boolean = false,
-        paperSize: String = "A4"
+        paperSize: String = "A4",
+        marginMode: String = "minimal" // "minimal", "normal", "none"
     ): List<Bitmap> {
         if (pages.isEmpty()) return emptyList()
         val nUp = when (pagesPerSheet) {
@@ -313,6 +330,15 @@ object PdfAndOcrService {
             paint.colorFilter = ColorMatrixColorFilter(cm)
         }
 
+        val outerMarginFrac = when {
+            fitMode == "fill" || marginMode == "none" -> 0f
+            marginMode == "normal" -> 0.06f
+            else -> 0.025f
+        }
+        val outerX = sheetW * outerMarginFrac
+        val outerY = sheetH * outerMarginFrac
+        val gutter = if (nUp > 1 && fitMode != "fill") min(sheetW, sheetH) * 0.02f else 0f
+
         for (chunk in chunks) {
             val sheet = Bitmap.createBitmap(sheetW, sheetH, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(sheet)
@@ -329,15 +355,17 @@ object PdfAndOcrService {
                 else -> 1
             }
 
-            val cellW = sheetW.toFloat() / cols
-            val cellH = sheetH.toFloat() / rows
+            val availW = sheetW - outerX * 2f - gutter * (cols - 1)
+            val availH = sheetH - outerY * 2f - gutter * (rows - 1)
+            val cellW = (availW / cols).coerceAtLeast(1f)
+            val cellH = (availH / rows).coerceAtLeast(1f)
             val userScale = (scalePercent.coerceIn(25, 100) / 100f)
 
             chunk.forEachIndexed { idx, bmp ->
                 val col = idx % cols
                 val row = idx / cols
-                val cellLeft = col * cellW
-                val cellTop = row * cellH
+                val cellLeft = outerX + col * (cellW + gutter)
+                val cellTop = outerY + row * (cellH + gutter)
 
                 val scale = if (fitMode == "fill") {
                     maxOf(cellW / bmp.width, cellH / bmp.height) * userScale
@@ -348,7 +376,11 @@ object PdfAndOcrService {
                 val drawH = bmp.height * scale
                 val dx = cellLeft + (cellW - drawW) / 2f
                 val dy = cellTop + (cellH - drawH) / 2f
+
+                canvas.save()
+                canvas.clipRect(cellLeft, cellTop, cellLeft + cellW, cellTop + cellH)
                 canvas.drawBitmap(bmp, null, RectF(dx, dy, dx + drawW, dy + drawH), paint)
+                canvas.restore()
             }
             sheets.add(sheet)
         }
@@ -416,7 +448,8 @@ object PdfAndOcrService {
         duplexMode: DuplexMode = DuplexMode.ONE_SIDED,
         grayscale: Boolean = false,
         landscape: Boolean = false,
-        paperSize: String = "A4"
+        paperSize: String = "A4",
+        onRenderForPageSize: ((targetPaperSize: String, isLandscape: Boolean, isMono: Boolean) -> List<Bitmap>)? = null
     ) {
         if (sheets.isEmpty()) return
         val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager ?: return
@@ -426,6 +459,7 @@ object PdfAndOcrService {
             "5x7\"" -> PrintAttributes.MediaSize("NA_5X7", "5x7 in", 5000, 7000)
             "8x10\"" -> PrintAttributes.MediaSize("NA_8X10", "8x10 in", 8000, 10000)
             "Letter" -> PrintAttributes.MediaSize.NA_LETTER
+            "Legal" -> PrintAttributes.MediaSize.NA_LEGAL
             else -> PrintAttributes.MediaSize.ISO_A4
         }
 
@@ -446,6 +480,26 @@ object PdfAndOcrService {
         }
 
         val adapter = object : PrintDocumentAdapter() {
+            private var activeMediaSize: PrintAttributes.MediaSize? = null
+            private var activeMono: Boolean = grayscale
+            private var currentSheets: List<Bitmap> = sheets
+
+            private fun mapMediaToPaperSize(media: PrintAttributes.MediaSize?): Pair<String, Boolean> {
+                if (media == null) return paperSize to landscape
+                val isLand = !media.isPortrait
+                val shortMils = min(media.widthMils, media.heightMils)
+                val longMils = maxOf(media.widthMils, media.heightMils)
+                val mapped = when {
+                    shortMils in 3800..4200 && longMils in 5800..6200 -> "4x6\""
+                    shortMils in 4800..5200 && longMils in 6800..7200 -> "5x7\""
+                    shortMils in 7800..8200 && longMils in 9800..10200 -> "8x10\""
+                    shortMils in 8300..8700 && longMils in 10800..11200 -> "Letter"
+                    shortMils in 8300..8700 && longMils in 13700..14300 -> "Legal"
+                    else -> "A4"
+                }
+                return mapped to isLand
+            }
+
             override fun onLayout(
                 oldAttributes: PrintAttributes?,
                 newAttributes: PrintAttributes?,
@@ -457,9 +511,18 @@ object PdfAndOcrService {
                     callback?.onLayoutCancelled()
                     return
                 }
+                activeMediaSize = newAttributes?.mediaSize
+                activeMono = newAttributes?.colorMode == PrintAttributes.COLOR_MODE_MONOCHROME
+                if (onRenderForPageSize != null && newAttributes != null) {
+                    val (mappedSize, isLand) = mapMediaToPaperSize(activeMediaSize)
+                    val rerendered = onRenderForPageSize(mappedSize, isLand, activeMono)
+                    if (rerendered.isNotEmpty()) {
+                        currentSheets = rerendered
+                    }
+                }
                 val info = PrintDocumentInfo.Builder("$jobName.pdf")
                     .setContentType(PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
-                    .setPageCount(sheets.size)
+                    .setPageCount(currentSheets.size)
                     .build()
                 callback?.onLayoutFinished(info, true)
             }
@@ -479,13 +542,28 @@ object PdfAndOcrService {
                     val pdf = PdfDocument()
                     val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
-                    sheets.forEachIndexed { idx, bmp ->
-                        val pageW = if (bmp.width > bmp.height) 842 else 595
-                        val pageH = if (bmp.width > bmp.height) 595 else 842
+                    val media = activeMediaSize
+                    val (pageW, pageH) = if (media != null && media.widthMils > 0 && media.heightMils > 0) {
+                        ((media.widthMils * 72f) / 1000f).roundToInt().coerceAtLeast(144) to
+                            ((media.heightMils * 72f) / 1000f).roundToInt().coerceAtLeast(144)
+                    } else {
+                        getPaperPoints(paperSize, landscape)
+                    }
+
+                    currentSheets.forEachIndexed { idx, bmp ->
                         val pageInfo = PdfDocument.PageInfo.Builder(pageW, pageH, idx + 1).create()
                         val page = pdf.startPage(pageInfo)
                         page.canvas.drawColor(Color.WHITE)
-                        page.canvas.drawBitmap(bmp, null, Rect(0, 0, pageW, pageH), paint)
+
+                        val scale = min(
+                            pageW.toFloat() / bmp.width.toFloat().coerceAtLeast(1f),
+                            pageH.toFloat() / bmp.height.toFloat().coerceAtLeast(1f)
+                        )
+                        val drawW = bmp.width * scale
+                        val drawH = bmp.height * scale
+                        val dx = (pageW - drawW) / 2f
+                        val dy = (pageH - drawH) / 2f
+                        page.canvas.drawBitmap(bmp, null, RectF(dx, dy, dx + drawW, dy + drawH), paint)
                         pdf.finishPage(page)
                     }
 

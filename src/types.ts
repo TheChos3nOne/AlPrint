@@ -135,6 +135,8 @@ export interface PrintRequest {
   borderless: boolean;
   fit_mode: "fit" | "fill";
   job_name?: string;
+  margin_mm?: number;
+  scale_percent?: number;
 }
 
 export interface DiagnosticCheck {

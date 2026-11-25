@@ -125,6 +125,8 @@ export function PrintPhotosView({
         borderless,
         fit_mode: borderless ? "fill" : "fit",
         job_name: "AlPrint Photo Print",
+        margin_mm: borderless ? 0 : 8,
+        scale_percent: 100,
       });
       onActivityUpdated();
       onNotify(msg);
@@ -135,8 +137,13 @@ export function PrintPhotosView({
     }
   };
 
+  const selectedDriverPaper = activePrinter?.paper_sizes?.find((s) => s.name === paperSizeName);
+  const portraitPaperAspect =
+    selectedDriverPaper && selectedDriverPaper.width_mm > 0 && selectedDriverPaper.height_mm > 0
+      ? selectedDriverPaper.width_mm / selectedDriverPaper.height_mm
+      : activePreset.aspect;
   const frameAspect =
-    orientation === "landscape" ? 1 / activePreset.aspect : activePreset.aspect;
+    orientation === "landscape" ? 1 / portraitPaperAspect : portraitPaperAspect;
 
   return (
     <div className="h-full flex overflow-hidden">

@@ -98,4 +98,16 @@ class ImageProcessorTest {
         assertEquals(1200 to 1800, region4x6)
         assertEquals(2480 to 3508, regionA4)
     }
+
+    @Test
+    fun testPaperPointsMatchStandardSizes() {
+        assertEquals(288 to 432, PdfAndOcrService.getPaperPoints("4x6\"", landscape = false))
+        assertEquals(432 to 288, PdfAndOcrService.getPaperPoints("4x6\"", landscape = true))
+        assertEquals(360 to 504, PdfAndOcrService.getPaperPoints("5x7\"", landscape = false))
+        assertEquals(576 to 720, PdfAndOcrService.getPaperPoints("8x10\"", landscape = false))
+        assertEquals(595 to 842, PdfAndOcrService.getPaperPoints("A4", landscape = false))
+        assertEquals(612 to 792, PdfAndOcrService.getPaperPoints("Letter", landscape = false))
+        assertEquals(612 to 1008, PdfAndOcrService.getPaperPoints("Legal", landscape = false))
+        assertEquals(1008 to 612, PdfAndOcrService.getPaperPoints("Legal", landscape = true))
+    }
 }

@@ -37,28 +37,44 @@ if ($doc.PrinterSettings.CanDuplex) {
     }
 }
 
-$doc.DefaultPageSettings.Landscape = [bool]$cfg.landscape
-$doc.DefaultPageSettings.Color = [bool]$cfg.color
-if ($cfg.borderless) {
-    $doc.OriginAtMargins = $false
-    $doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0, 0, 0, 0)
-}
-
 if ($cfg.paper_size_name) {
-    $wanted = [string]$cfg.paper_size_name
+    $wanted = ([string]$cfg.paper_size_name).Trim()
+    $matched = $null
     foreach ($sz in $doc.PrinterSettings.PaperSizes) {
-        if ($sz.PaperName -eq $wanted) {
-            $doc.DefaultPageSettings.PaperSize = $sz
+        if ($sz.PaperName -ieq $wanted) {
+            $matched = $sz
             break
         }
     }
+    if (-not $matched) {
+        $normWanted = ($wanted.ToLower() -replace '[^a-z0-9]', '')
+        foreach ($sz in $doc.PrinterSettings.PaperSizes) {
+            $normName = (([string]$sz.PaperName).ToLower() -replace '[^a-z0-9]', '')
+            if ($normName -eq $normWanted -or $normName.Contains($normWanted) -or $normWanted.Contains($normName)) {
+                $matched = $sz
+                break
+            }
+        }
+    }
+    if ($matched) {
+        $doc.DefaultPageSettings.PaperSize = $matched
+    }
 }
+
+$doc.DefaultPageSettings.Landscape = [bool]$cfg.landscape
+$doc.DefaultPageSettings.Color = [bool]$cfg.color
+# Disable .NET's 1-inch (100 hundredths of an inch) default margins so AlPrint controls margins explicitly
+$doc.OriginAtMargins = $false
+$doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0, 0, 0, 0)
 
 $script:pageIdx = 0
 $script:paths = @($cfg.page_paths)
 $script:fitMode = if ($cfg.fit_mode) { [string]$cfg.fit_mode } else { 'fit' }
 $script:borderless = [bool]$cfg.borderless
 $script:forceGray = (-not [bool]$cfg.color)
+$script:marginMm = $cfg.margin_mm
+$rawScale = if ($null -ne $cfg.scale_percent) { [int]$cfg.scale_percent } else { 100 }
+$script:scalePct = [math]::Max(25, [math]::Min(100, $rawScale))
 
 $doc.add_PrintPage({
     param($sender, $e)
@@ -74,24 +90,61 @@ $doc.add_PrintPage({
         $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
         $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
 
-        $bounds = if ($script:borderless) { $e.PageBounds } else { $e.MarginBounds }
-        if ($bounds.Width -le 0 -or $bounds.Height -le 0) { $bounds = $e.PageBounds }
+        $pageBounds = [System.Drawing.RectangleF]$e.PageBounds
+
+        $pa = $e.PageSettings.PrintableArea
+        if ($e.PageSettings.Landscape) {
+            $printable = New-Object System.Drawing.RectangleF($pa.Y, $pa.X, $pa.Height, $pa.Width)
+        } else {
+            $printable = New-Object System.Drawing.RectangleF($pa.X, $pa.Y, $pa.Width, $pa.Height)
+        }
+        if ($printable.Width -le 0 -or $printable.Height -le 0) {
+            $printable = $pageBounds
+        }
+
+        if ($script:borderless -or ($null -ne $script:marginMm -and [double]$script:marginMm -le 0.01)) {
+            $bounds = $pageBounds
+        } elseif ($null -ne $script:marginMm -and [double]$script:marginMm -gt 0) {
+            $m = [float]([double]$script:marginMm / 0.254)
+            $insetW = [math]::Max(10.0, [double]$pageBounds.Width - 2.0 * $m)
+            $insetH = [math]::Max(10.0, [double]$pageBounds.Height - 2.0 * $m)
+            $userRect = New-Object System.Drawing.RectangleF($m, $m, [float]$insetW, [float]$insetH)
+            $intersected = [System.Drawing.RectangleF]::Intersect($userRect, $printable)
+            if ($intersected.Width -gt 10 -and $intersected.Height -gt 10) {
+                $bounds = $intersected
+            } else {
+                $bounds = $userRect
+            }
+        } else {
+            if ($script:fitMode -eq 'fill') {
+                $bounds = $pageBounds
+            } else {
+                $bounds = $printable
+                # If a virtual/driver printer reports 0 hardware margin, apply a clean 3 mm (12/100 in) inset
+                if ($bounds.X -lt 1 -and $bounds.Width -ge ($pageBounds.Width - 1) -and $pageBounds.Width -gt 60 -and $pageBounds.Height -gt 60) {
+                    $bounds = New-Object System.Drawing.RectangleF(12.0, 12.0, [float]($pageBounds.Width - 24.0), [float]($pageBounds.Height - 24.0))
+                }
+            }
+        }
 
         $iw = [double]$img.Width
         $ih = [double]$img.Height
         $bw = [double]$bounds.Width
         $bh = [double]$bounds.Height
+        $userScale = [double]$script:scalePct / 100.0
 
         if ($script:fitMode -eq 'fill') {
-            $scale = [math]::Max($bw / $iw, $bh / $ih)
+            $scale = [math]::Max($bw / $iw, $bh / $ih) * $userScale
         } else {
-            $scale = [math]::Min($bw / $iw, $bh / $ih)
+            $scale = [math]::Min($bw / $iw, $bh / $ih) * $userScale
         }
         $dw = [float]($iw * $scale)
         $dh = [float]($ih * $scale)
         $dx = [float]($bounds.X + ($bw - $dw) / 2.0)
         $dy = [float]($bounds.Y + ($bh - $dh) / 2.0)
 
+        $prevClip = $g.Clip
+        $g.SetClip($bounds)
         $destRect = New-Object System.Drawing.RectangleF($dx, $dy, $dw, $dh)
         if ($script:forceGray) {
             $ia = New-Object System.Drawing.Imaging.ImageAttributes
@@ -108,6 +161,7 @@ $doc.add_PrintPage({
         } else {
             $g.DrawImage($img, $destRect)
         }
+        $g.Clip = $prevClip
     } finally {
         $img.Dispose()
     }
@@ -140,6 +194,8 @@ pub fn print_test_page(printer_name: &str) -> Result<String, String> {
         borderless: false,
         fit_mode: "fit".to_string(),
         job_name: Some("AlPrint Diagnostic Test Page".to_string()),
+        margin_mm: Some(8.0),
+        scale_percent: Some(100),
     };
 
     let res = print_pages(req);

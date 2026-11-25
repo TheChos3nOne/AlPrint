@@ -153,6 +153,10 @@ pub struct PrintRequest {
     pub borderless: bool,
     pub fit_mode: String, // "fit" | "fill"
     pub job_name: Option<String>,
+    #[serde(default)]
+    pub margin_mm: Option<f64>,
+    #[serde(default)]
+    pub scale_percent: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

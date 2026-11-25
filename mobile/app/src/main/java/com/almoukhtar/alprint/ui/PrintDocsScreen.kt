@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -55,6 +57,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -83,9 +86,22 @@ fun PrintDocsScreen(
     var pagesPerSheet by remember { mutableIntStateOf(1) } // 1, 2, 4
     var grayscale by remember { mutableStateOf(false) }
     var landscape by remember { mutableStateOf(false) }
+    var paperSize by remember { mutableStateOf("A4") }
     var fitMode by remember { mutableStateOf("fit") } // "fit" or "fill"
+    var marginMode by remember { mutableStateOf("minimal") } // "minimal", "normal", "none"
     var scalePercent by remember { mutableFloatStateOf(100f) }
     var duplexMode by remember { mutableStateOf(DuplexMode.ONE_SIDED) }
+
+    val paperSizeOptions = listOf("A4", "Letter", "Legal", "4x6\"", "5x7\"", "8x10\"")
+    val (sheetW, sheetH) = remember(paperSize, landscape) {
+        PdfAndOcrService.getPaperDimensions(paperSize, landscape)
+    }
+    val sheetAspectRatio = remember(sheetW, sheetH) {
+        sheetW.toFloat() / sheetH.toFloat().coerceAtLeast(1f)
+    }
+    val paperDimensionsLabel = remember(paperSize, landscape) {
+        PdfAndOcrService.getPaperDimensionsLabel(paperSize, landscape)
+    }
 
     var composedSheets by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
     var currentSheetIndex by remember { mutableIntStateOf(0) }
@@ -94,6 +110,15 @@ fun PrintDocsScreen(
     var manualPass2Sheets by remember { mutableStateOf<List<Bitmap>?>(null) }
     var manualAddedBlankPage by remember { mutableStateOf(false) }
 
+    fun selectedSourceBitmaps(): List<Bitmap> {
+        val indices = if (rangeMode == "custom") {
+            PdfAndOcrService.parsePageRange(customRangeExpr, sourcePages.size)
+        } else {
+            sourcePages.indices.toList()
+        }
+        return indices.mapNotNull { sourcePages.getOrNull(it) }
+    }
+
     LaunchedEffect(
         sourcePages,
         rangeMode,
@@ -101,7 +126,9 @@ fun PrintDocsScreen(
         pagesPerSheet,
         grayscale,
         landscape,
+        paperSize,
         fitMode,
+        marginMode,
         scalePercent
     ) {
         if (sourcePages.isEmpty()) {
@@ -109,19 +136,16 @@ fun PrintDocsScreen(
             currentSheetIndex = 0
         } else {
             withContext(Dispatchers.Default) {
-                val indices = if (rangeMode == "custom") {
-                    PdfAndOcrService.parsePageRange(customRangeExpr, sourcePages.size)
-                } else {
-                    sourcePages.indices.toList()
-                }
-                val filtered = indices.mapNotNull { sourcePages.getOrNull(it) }
+                val filtered = selectedSourceBitmaps()
                 val sheets = PdfAndOcrService.composePrintSheets(
                     pages = filtered,
                     pagesPerSheet = pagesPerSheet,
                     grayscale = grayscale,
                     scalePercent = scalePercent.roundToInt(),
                     fitMode = fitMode,
-                    landscape = landscape
+                    landscape = landscape,
+                    paperSize = paperSize,
+                    marginMode = marginMode
                 )
                 composedSheets = sheets
                 if (currentSheetIndex >= sheets.size) {
@@ -177,7 +201,8 @@ fun PrintDocsScreen(
                             sheets = pass2,
                             duplexMode = DuplexMode.ONE_SIDED,
                             grayscale = grayscale,
-                            landscape = landscape
+                            landscape = landscape,
+                            paperSize = paperSize
                         )
                         onLogPrintJob(
                             "Manual Duplex Pass 2: $docTitle",
@@ -261,14 +286,14 @@ fun PrintDocsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = docTitle,
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "Sheet ${currentSheetIndex + 1} of ${composedSheets.size} (${sourcePages.size} source page${if (sourcePages.size == 1) "" else "s"} • ${pagesPerSheet}-up)",
+                                text = "Sheet ${currentSheetIndex + 1}/${composedSheets.size} • $paperDimensionsLabel • ${pagesPerSheet}-Up",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -292,19 +317,51 @@ fun PrintDocsScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(310.dp)
+                            .height(320.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0xFF0F172A)),
+                            .background(Color(0xFF0F172A))
+                            .padding(16.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Image(
-                            bitmap = activeSheet.asImageBitmap(),
-                            contentDescription = "Sheet Preview",
-                            contentScale = ContentScale.Fit,
+                        Box(
                             modifier = Modifier
-                                .fillMaxSize()
-                                .padding(12.dp)
-                        )
+                                .then(
+                                    if (landscape) {
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .aspectRatio(sheetAspectRatio, matchHeightConstraintsFirst = false)
+                                    } else {
+                                        Modifier
+                                            .fillMaxHeight()
+                                            .aspectRatio(sheetAspectRatio, matchHeightConstraintsFirst = true)
+                                    }
+                                )
+                                .shadow(8.dp, RoundedCornerShape(4.dp))
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color.White)
+                                .border(1.dp, Color(0xFFCBD5E1), RoundedCornerShape(4.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Image(
+                                bitmap = activeSheet.asImageBitmap(),
+                                contentDescription = "Sheet Preview",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+
+                        Surface(
+                            color = Color(0xCC0F172A),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.align(Alignment.BottomEnd)
+                        ) {
+                            Text(
+                                text = "$paperSize • ${if (landscape) "Landscape" else "Portrait"} • ${scalePercent.roundToInt()}%",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -411,6 +468,24 @@ fun PrintDocsScreen(
                     )
                 }
 
+                // Paper Size Selector
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Paper:", style = MaterialTheme.typography.bodySmall)
+                    for (sz in paperSizeOptions) {
+                        FilterChip(
+                            selected = paperSize == sz,
+                            onClick = { paperSize = sz },
+                            label = { Text(sz) }
+                        )
+                    }
+                }
+
                 // Pages Per Sheet (1 / 2 / 4 N-Up)
                 Row(
                     modifier = Modifier
@@ -434,6 +509,32 @@ fun PrintDocsScreen(
                             }
                         )
                     }
+                }
+
+                // Margins Selector
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Margins:", style = MaterialTheme.typography.bodySmall)
+                    FilterChip(
+                        selected = marginMode == "minimal",
+                        onClick = { marginMode = "minimal" },
+                        label = { Text("Minimal") }
+                    )
+                    FilterChip(
+                        selected = marginMode == "normal",
+                        onClick = { marginMode = "normal" },
+                        label = { Text("Standard") }
+                    )
+                    FilterChip(
+                        selected = marginMode == "none",
+                        onClick = { marginMode = "none" },
+                        label = { Text("None") }
+                    )
                 }
 
                 // Color & Orientation
@@ -517,11 +618,12 @@ fun PrintDocsScreen(
                                 sheets = pass1Odd,
                                 duplexMode = DuplexMode.ONE_SIDED,
                                 grayscale = grayscale,
-                                landscape = landscape
+                                landscape = landscape,
+                                paperSize = paperSize
                             )
                             onLogPrintJob(
                                 "Manual Duplex Pass 1: $docTitle",
-                                "${pass1Odd.size} front sheet(s) sent to printer"
+                                "${pass1Odd.size} front sheet(s) • $paperSize"
                             )
                         } else {
                             PdfAndOcrService.printBitmapsWithAndroidSpooler(
@@ -530,11 +632,24 @@ fun PrintDocsScreen(
                                 sheets = composedSheets,
                                 duplexMode = duplexMode,
                                 grayscale = grayscale,
-                                landscape = landscape
+                                landscape = landscape,
+                                paperSize = paperSize,
+                                onRenderForPageSize = { targetSize, targetLand, targetMono ->
+                                    PdfAndOcrService.composePrintSheets(
+                                        pages = selectedSourceBitmaps(),
+                                        pagesPerSheet = pagesPerSheet,
+                                        grayscale = targetMono,
+                                        scalePercent = scalePercent.roundToInt(),
+                                        fitMode = fitMode,
+                                        landscape = targetLand,
+                                        paperSize = targetSize,
+                                        marginMode = marginMode
+                                    )
+                                }
                             )
                             onLogPrintJob(
                                 "Print Document: $docTitle",
-                                "${composedSheets.size} sheet(s) • ${duplexMode.label}"
+                                "${composedSheets.size} sheet(s) • $paperSize • ${duplexMode.label}"
                             )
                         }
                     },

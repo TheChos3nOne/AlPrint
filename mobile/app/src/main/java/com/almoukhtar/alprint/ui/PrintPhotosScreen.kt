@@ -356,7 +356,18 @@ fun PrintPhotosScreen(
                             duplexMode = DuplexMode.ONE_SIDED,
                             grayscale = false,
                             landscape = landscape,
-                            paperSize = selectedPhotoSize
+                            paperSize = selectedPhotoSize,
+                            onRenderForPageSize = { targetSize, targetLand, _ ->
+                                photos.map { raw ->
+                                    val rotated = if (extraRotation == 0) raw else ImageProcessor.rotateBitmap(raw, extraRotation)
+                                    PdfAndOcrService.composePhotoSheet(
+                                        photo = rotated,
+                                        paperSize = targetSize,
+                                        fillMode = fillMode,
+                                        landscape = targetLand
+                                    )
+                                }
+                            }
                         )
                         onLogPrintJob(
                             "Print Photos ($selectedPhotoSize ${if (landscape) "Landscape" else "Portrait"})",

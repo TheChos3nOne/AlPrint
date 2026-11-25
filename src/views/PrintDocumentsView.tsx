@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { api, pickFiles, toAssetUrl } from "../lib/api";
 import { rasterizePdfFile } from "../lib/pdfTools";
-import type { PrinterInfo, ScanPage } from "../types";
+import type { PaperSizeInfo, PrinterInfo, ScanPage } from "../types";
 
 interface PrintDocumentsViewProps {
   sessionId: string;
@@ -64,21 +64,46 @@ async function loadDrawableImage(item: DocPageItem): Promise<HTMLImageElement> {
   });
 }
 
+function resolvePaperMm(
+  paperSizeName: string,
+  printerSizes?: PaperSizeInfo[]
+): { w: number; h: number } {
+  if (printerSizes?.length) {
+    const exact = printerSizes.find(
+      (s) => s.name.toLowerCase() === paperSizeName.toLowerCase() && s.width_mm > 0 && s.height_mm > 0
+    );
+    if (exact) return { w: exact.width_mm, h: exact.height_mm };
+  }
+  const n = paperSizeName.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (n.includes("letter")) return { w: 215.9, h: 279.4 };
+  if (n.includes("legal")) return { w: 215.9, h: 355.6 };
+  if (n.includes("a5")) return { w: 148, h: 210 };
+  if (n.includes("a3")) return { w: 297, h: 420 };
+  if (n.includes("4x6") || n.includes("10x15")) return { w: 101.6, h: 152.4 };
+  if (n.includes("5x7") || n.includes("13x18")) return { w: 127, h: 177.8 };
+  if (n.includes("8x10")) return { w: 203.2, h: 254 };
+  if (n.includes("b5")) return { w: 176, h: 250 };
+  return { w: 210, h: 297 };
+}
+
 async function composeNupSheetDataUrl(
   items: DocPageItem[],
   perSheet: 2 | 4,
-  landscape: boolean
+  landscape: boolean,
+  sheetAspect: number
 ): Promise<string> {
   const cols = perSheet === 2 ? (landscape ? 2 : 1) : 2;
   const rows = perSheet === 2 ? (landscape ? 1 : 2) : 2;
+  const longSide = 2338;
+  const safeAspect = Number.isFinite(sheetAspect) && sheetAspect > 0 ? sheetAspect : landscape ? 297 / 210 : 210 / 297;
   const canvas = document.createElement("canvas");
-  canvas.width = landscape ? 2338 : 1654;
-  canvas.height = landscape ? 1654 : 2338;
+  canvas.width = safeAspect >= 1 ? longSide : Math.round(longSide * safeAspect);
+  canvas.height = safeAspect >= 1 ? Math.round(longSide / safeAspect) : longSide;
   const ctx = canvas.getContext("2d")!;
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  const pad = 40;
+  const pad = Math.round(Math.min(canvas.width, canvas.height) * 0.02);
   const cellW = (canvas.width - pad * (cols + 1)) / cols;
   const cellH = (canvas.height - pad * (rows + 1)) / rows;
 
@@ -129,6 +154,8 @@ export function PrintDocumentsView({
   const [paperSize, setPaperSize] = useState("A4");
   const [color, setColor] = useState(true);
   const [fitMode, setFitMode] = useState<"fit" | "fill">("fit");
+  const [marginMode, setMarginMode] = useState<"minimal" | "normal" | "none">("minimal");
+  const [scalePercent, setScalePercent] = useState(100);
   const [pagesPerSheet, setPagesPerSheet] = useState<1 | 2 | 4>(1);
   const [duplexMode, setDuplexMode] = useState<
     "simplex" | "long_edge" | "short_edge" | "manual_duplex"
@@ -140,7 +167,18 @@ export function PrintDocumentsView({
     pass2Paths: string[];
     paperSize: string;
     addedBlankBack: boolean;
+    marginMm: number | undefined;
+    borderless: boolean;
+    scalePercent: number;
   } | null>(null);
+
+  const portraitMm = useMemo(
+    () => resolvePaperMm(paperSize, activePrinter?.paper_sizes),
+    [paperSize, activePrinter]
+  );
+  const sheetMmW = orientation === "landscape" ? portraitMm.h : portraitMm.w;
+  const sheetMmH = orientation === "landscape" ? portraitMm.w : portraitMm.h;
+  const sheetAspect = sheetMmW / Math.max(1, sheetMmH);
 
   useEffect(() => {
     if (incomingPages.length === 0) return;
@@ -262,7 +300,8 @@ export function PrintDocumentsView({
         const composedDataUrl = await composeNupSheetDataUrl(
           group,
           pagesPerSheet as 2 | 4,
-          orientation === "landscape"
+          orientation === "landscape",
+          sheetAspect
         );
         const saved = await api.saveBase64Page(
           sessionId,
@@ -275,6 +314,9 @@ export function PrintDocumentsView({
     }
     return diskPaths;
   };
+
+  const resolvedMarginMm =
+    marginMode === "none" ? 0 : marginMode === "normal" ? 12 : undefined;
 
   const handlePrint = async () => {
     if (!activePrinter) {
@@ -316,9 +358,11 @@ export function PrintDocumentsView({
           paper_size_name: paperSize,
           color: activePrinter.supports_color ? color : false,
           duplex: "simplex",
-          borderless: false,
+          borderless: marginMode === "none",
           fit_mode: fitMode,
           job_name: "AlPrint Manual Duplex (Pass 1 - Odd Pages)",
+          margin_mm: resolvedMarginMm,
+          scale_percent: scalePercent,
         });
 
         setManualDuplexModal({
@@ -326,6 +370,9 @@ export function PrintDocumentsView({
           pass2Paths: evenPaths,
           paperSize,
           addedBlankBack,
+          marginMm: resolvedMarginMm,
+          borderless: marginMode === "none",
+          scalePercent,
         });
         onNotify("Pass 1 (odd pages) sent! Follow the flip prompt for Pass 2.");
         return;
@@ -342,9 +389,11 @@ export function PrintDocumentsView({
           duplexMode === "manual_duplex" || !activePrinter.supports_duplex
             ? "simplex"
             : duplexMode,
-        borderless: false,
+        borderless: marginMode === "none",
         fit_mode: fitMode,
         job_name: "AlPrint Document",
+        margin_mm: resolvedMarginMm,
+        scale_percent: scalePercent,
       });
       onActivityUpdated();
       onNotify(msg);
@@ -367,9 +416,11 @@ export function PrintDocumentsView({
         paper_size_name: manualDuplexModal.paperSize,
         color: activePrinter.supports_color ? color : false,
         duplex: "simplex",
-        borderless: false,
+        borderless: manualDuplexModal.borderless,
         fit_mode: fitMode,
         job_name: "AlPrint Manual Duplex (Pass 2 - Even Pages)",
+        margin_mm: manualDuplexModal.marginMm,
+        scale_percent: manualDuplexModal.scalePercent,
       });
       setManualDuplexModal(null);
       onActivityUpdated();
@@ -510,8 +561,41 @@ export function PrintDocumentsView({
                 className="w-full px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
               >
                 <option value="fit">Fit to Page</option>
-                <option value="fill">Fill Page</option>
+                <option value="fill">Fill Page (Crop)</option>
               </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2.5 items-end">
+            <div>
+              <label className="font-medium text-slate-500 block mb-1">Margins</label>
+              <select
+                value={marginMode}
+                onChange={(e) =>
+                  setMarginMode(e.target.value as "minimal" | "normal" | "none")
+                }
+                className="w-full px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+              >
+                <option value="minimal">Minimal (~3 mm)</option>
+                <option value="normal">Standard (12 mm)</option>
+                <option value="none">None / Borderless</option>
+              </select>
+            </div>
+
+            <div>
+              <div className="flex justify-between font-medium text-slate-500 mb-1">
+                <span>Scale</span>
+                <span>{scalePercent}%</span>
+              </div>
+              <input
+                type="range"
+                min={50}
+                max={100}
+                step={5}
+                value={scalePercent}
+                onChange={(e) => setScalePercent(Number(e.target.value))}
+                className="w-full accent-indigo-600 my-1.5"
+              />
             </div>
           </div>
 
@@ -661,47 +745,73 @@ export function PrintDocumentsView({
         ) : (
           <>
             <div className="flex-1 min-h-0 p-8 flex items-center justify-center overflow-auto">
-              <div
-                className={`bg-white shadow-xl rounded-md p-4 transition-all flex items-center justify-center ${
-                  orientation === "landscape"
-                    ? "w-[680px] aspect-[297/210]"
-                    : "h-[600px] max-h-full aspect-[210/297]"
-                }`}
-              >
-                <div
-                  className={`w-full h-full grid gap-3 ${
-                    pagesPerSheet === 1
-                      ? "grid-cols-1 grid-rows-1"
-                      : pagesPerSheet === 2
-                      ? orientation === "landscape"
-                        ? "grid-cols-2 grid-rows-1"
-                        : "grid-cols-1 grid-rows-2"
-                      : "grid-cols-2 grid-rows-2"
-                  }`}
-                >
-                  {currentSheet.map((item) => (
+              {(() => {
+                // Proportional physical sizing relative to A4 (297mm = 580px) so Letter, Legal, A5, and 4x6 visibly resize
+                const baseScalePx = 580 / 297;
+                const rawW = sheetMmW * baseScalePx;
+                const rawH = sheetMmH * baseScalePx;
+                const clamp = Math.min(1, 660 / Math.max(1, rawW), 580 / Math.max(1, rawH));
+                const boxW = Math.max(180, Math.round(rawW * clamp));
+                const boxH = Math.max(180, Math.round(rawH * clamp));
+                const marginPadPx =
+                  marginMode === "none" || fitMode === "fill"
+                    ? 0
+                    : marginMode === "normal"
+                    ? Math.max(8, Math.round(boxW * (12 / Math.max(1, sheetMmW))))
+                    : Math.max(4, Math.round(boxW * (3 / Math.max(1, sheetMmW))));
+
+                return (
+                  <div
+                    style={{
+                      width: `${boxW}px`,
+                      height: `${boxH}px`,
+                      padding: `${marginPadPx}px`,
+                    }}
+                    className="bg-white shadow-xl rounded-md transition-all duration-150 flex items-center justify-center overflow-hidden"
+                  >
                     <div
-                      key={item.id}
-                      className="w-full h-full flex items-center justify-center overflow-hidden border border-slate-100"
+                      style={{
+                        transform: `scale(${scalePercent / 100})`,
+                        transformOrigin: "center",
+                      }}
+                      className={`w-full h-full transition-transform duration-150 grid gap-2.5 ${
+                        pagesPerSheet === 1
+                          ? "grid-cols-1 grid-rows-1"
+                          : pagesPerSheet === 2
+                          ? orientation === "landscape"
+                            ? "grid-cols-2 grid-rows-1"
+                            : "grid-cols-1 grid-rows-2"
+                          : "grid-cols-2 grid-rows-2"
+                      }`}
                     >
-                      <img
-                        src={item.srcUrl}
-                        alt={item.label}
-                        style={{ filter: color ? "none" : "grayscale(100%)" }}
-                        className={`w-full h-full ${
-                          fitMode === "fill" ? "object-cover" : "object-contain"
-                        }`}
-                      />
+                      {currentSheet.map((item) => (
+                        <div
+                          key={item.id}
+                          className="w-full h-full flex items-center justify-center overflow-hidden"
+                        >
+                          <img
+                            src={item.srcUrl}
+                            alt={item.label}
+                            style={{ filter: color ? "none" : "grayscale(100%)" }}
+                            className={`w-full h-full ${
+                              fitMode === "fill" ? "object-cover" : "object-contain"
+                            }`}
+                          />
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              </div>
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="px-6 py-3 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs">
               <span className="text-slate-500">
-                Sheet {Math.min(activeSheetIdx + 1, sheets.length)} of {sheets.length} (
-                {selectedIndices.length} page{selectedIndices.length === 1 ? "" : "s"})
+                Sheet {Math.min(activeSheetIdx + 1, sheets.length)} of {sheets.length} ·{" "}
+                {selectedIndices.length} page{selectedIndices.length === 1 ? "" : "s"} ·{" "}
+                <strong className="text-slate-700 dark:text-slate-300">
+                  {paperSize} ({Math.round(sheetMmW)} × {Math.round(sheetMmH)} mm)
+                </strong>
               </span>
               <div className="flex items-center gap-2">
                 <button
