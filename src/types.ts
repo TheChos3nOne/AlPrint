@@ -137,6 +137,7 @@ export interface PrintRequest {
   job_name?: string;
   margin_mm?: number;
   scale_percent?: number;
+  dpi?: number;
 }
 
 export interface DiagnosticCheck {

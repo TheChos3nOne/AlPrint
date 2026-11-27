@@ -40,6 +40,42 @@ export async function rasterizePdfFile(
   return rasterizePdfBytes(base64ToUint8Array(b64), scale);
 }
 
+export async function rasterizePdfPages(
+  filePath: string,
+  pageNumbers: number[],
+  scale: number
+): Promise<Map<number, RenderedPdfPage>> {
+  const b64 = await api.readFileBase64(filePath);
+  const data = base64ToUint8Array(b64);
+  const loadingTask = getDocument({ data });
+  const pdf = await loadingTask.promise;
+  const out = new Map<number, RenderedPdfPage>();
+  const uniquePages = Array.from(new Set(pageNumbers)).filter(
+    (n) => n >= 1 && n <= pdf.numPages
+  );
+
+  for (const pageNum of uniquePages) {
+    const page = await pdf.getPage(pageNum);
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) continue;
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    out.set(pageNum, {
+      pageNumber: pageNum,
+      dataUrl: canvas.toDataURL("image/png"),
+      width: canvas.width,
+      height: canvas.height,
+    });
+  }
+  return out;
+}
+
 export async function rasterizePdfBytes(
   data: Uint8Array,
   scale = 2.0

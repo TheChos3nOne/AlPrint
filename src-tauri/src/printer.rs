@@ -67,6 +67,44 @@ $doc.DefaultPageSettings.Color = [bool]$cfg.color
 $doc.OriginAtMargins = $false
 $doc.DefaultPageSettings.Margins = New-Object System.Drawing.Printing.Margins(0, 0, 0, 0)
 
+if ($null -ne $cfg.dpi -and [int]$cfg.dpi -gt 0) {
+    $wantedDpi = [int]$cfg.dpi
+    try {
+        $matchedRes = $null
+        $bestCustom = $null
+        $bestDiff = 999999
+        foreach ($r in $doc.PrinterSettings.PrinterResolutions) {
+            if ($r.X -eq $wantedDpi) {
+                $matchedRes = $r
+                break
+            }
+            if ($r.X -gt 0) {
+                $d = [math]::Abs($r.X - $wantedDpi)
+                if ($d -lt $bestDiff) {
+                    $bestDiff = $d
+                    $bestCustom = $r
+                }
+            }
+        }
+        if (-not $matchedRes) {
+            if ($wantedDpi -le 150) {
+                $matchedRes = $doc.PrinterSettings.PrinterResolutions | Where-Object { $_.Kind -eq [System.Drawing.Printing.PrinterResolutionKind]::Draft } | Select-Object -First 1
+                if (-not $matchedRes) {
+                    $matchedRes = $doc.PrinterSettings.PrinterResolutions | Where-Object { $_.Kind -eq [System.Drawing.Printing.PrinterResolutionKind]::Low } | Select-Object -First 1
+                }
+            } elseif ($wantedDpi -ge 600) {
+                $matchedRes = $doc.PrinterSettings.PrinterResolutions | Where-Object { $_.Kind -eq [System.Drawing.Printing.PrinterResolutionKind]::High } | Select-Object -First 1
+            } else {
+                $matchedRes = $doc.PrinterSettings.PrinterResolutions | Where-Object { $_.Kind -eq [System.Drawing.Printing.PrinterResolutionKind]::Medium } | Select-Object -First 1
+            }
+            if (-not $matchedRes) { $matchedRes = $bestCustom }
+        }
+        if ($matchedRes) {
+            $doc.DefaultPageSettings.PrinterResolution = $matchedRes
+        }
+    } catch {}
+}
+
 $script:pageIdx = 0
 $script:paths = @($cfg.page_paths)
 $script:fitMode = if ($cfg.fit_mode) { [string]$cfg.fit_mode } else { 'fit' }
@@ -207,6 +245,7 @@ pub fn print_test_page(printer_name: &str) -> Result<String, String> {
         job_name: Some("AlPrint Diagnostic Test Page".to_string()),
         margin_mm: Some(8.0),
         scale_percent: Some(100),
+        dpi: Some(300),
     };
 
     let res = print_pages(req);

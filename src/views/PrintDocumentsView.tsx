@@ -11,7 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { api, pickFiles, toAssetUrl } from "../lib/api";
-import { rasterizePdfFile } from "../lib/pdfTools";
+import { rasterizePdfFile, rasterizePdfPages } from "../lib/pdfTools";
 import type { PaperSizeInfo, PrinterInfo, ScanPage } from "../types";
 
 interface PrintDocumentsViewProps {
@@ -31,6 +31,8 @@ interface DocPageItem {
   srcUrl: string;
   filePath?: string; // If already saved on disk
   dataUrl?: string;  // If rasterized from PDF in memory
+  sourcePdfPath?: string;
+  sourcePageNumber?: number;
   width: number;
   height: number;
 }
@@ -90,11 +92,13 @@ async function composeNupSheetDataUrl(
   items: DocPageItem[],
   perSheet: 2 | 4,
   landscape: boolean,
-  sheetAspect: number
+  sheetAspect: number,
+  targetDpi = 200
 ): Promise<string> {
   const cols = perSheet === 2 ? (landscape ? 2 : 1) : 2;
   const rows = perSheet === 2 ? (landscape ? 1 : 2) : 2;
-  const longSide = 2338;
+  const effectiveDpi = Math.max(150, Math.min(450, targetDpi));
+  const longSide = Math.max(1500, Math.min(4800, Math.round(11.69 * effectiveDpi)));
   const safeAspect = Number.isFinite(sheetAspect) && sheetAspect > 0 ? sheetAspect : landscape ? 297 / 210 : 210 / 297;
   const canvas = document.createElement("canvas");
   canvas.width = safeAspect >= 1 ? longSide : Math.round(longSide * safeAspect);
@@ -156,6 +160,7 @@ export function PrintDocumentsView({
   const [fitMode, setFitMode] = useState<"fit" | "fill">("fit");
   const [marginMode, setMarginMode] = useState<"minimal" | "normal" | "none">("minimal");
   const [scalePercent, setScalePercent] = useState(100);
+  const [printDpi, setPrintDpi] = useState<number>(300);
   const [pagesPerSheet, setPagesPerSheet] = useState<1 | 2 | 4>(1);
   const [duplexMode, setDuplexMode] = useState<
     "simplex" | "long_edge" | "short_edge" | "manual_duplex"
@@ -170,6 +175,7 @@ export function PrintDocumentsView({
     marginMm: number | undefined;
     borderless: boolean;
     scalePercent: number;
+    dpi: number;
   } | null>(null);
 
   const portraitMm = useMemo(
@@ -226,13 +232,15 @@ export function PrintDocumentsView({
         const lower = p.toLowerCase();
         const fname = p.split(/[\\/]/).pop() ?? "Document";
         if (lower.endsWith(".pdf")) {
-          const rendered = await rasterizePdfFile(p, 3.0);
+          const rendered = await rasterizePdfFile(p, 2.0);
           for (const r of rendered) {
             loaded.push({
               id: `${p}-${r.pageNumber}`,
               label: `${fname} · Page ${r.pageNumber}`,
               srcUrl: r.dataUrl,
               dataUrl: r.dataUrl,
+              sourcePdfPath: p,
+              sourcePageNumber: r.pageNumber,
               width: r.width,
               height: r.height,
             });
@@ -283,9 +291,33 @@ export function PrintDocumentsView({
   }, [selectedIndices, pages, pagesPerSheet]);
 
   const ensureDiskPaths = async (): Promise<string[]> => {
+    const renderDpi = Math.max(150, Math.min(600, printDpi));
+    const highResMap = new Map<string, string>();
+    const pdfPageRequests = new Map<string, number[]>();
+
+    for (const group of sheets) {
+      for (const item of group) {
+        if (item.sourcePdfPath && item.sourcePageNumber) {
+          const arr = pdfPageRequests.get(item.sourcePdfPath) ?? [];
+          arr.push(item.sourcePageNumber);
+          pdfPageRequests.set(item.sourcePdfPath, arr);
+        }
+      }
+    }
+
+    for (const [pdfPath, pageNums] of pdfPageRequests.entries()) {
+      const rendered = await rasterizePdfPages(pdfPath, pageNums, renderDpi / 72);
+      for (const [pNum, pageData] of rendered.entries()) {
+        highResMap.set(`${pdfPath}-${pNum}`, pageData.dataUrl);
+      }
+    }
+
     const diskPaths: string[] = [];
     for (let sIdx = 0; sIdx < sheets.length; sIdx++) {
-      const group = sheets[sIdx];
+      const group = sheets[sIdx].map((item) => {
+        const hiDataUrl = highResMap.get(item.id);
+        return hiDataUrl ? { ...item, dataUrl: hiDataUrl, srcUrl: hiDataUrl } : item;
+      });
       if (pagesPerSheet === 1 && group[0]?.filePath) {
         diskPaths.push(group[0].filePath);
       } else if (pagesPerSheet === 1 && group[0]?.dataUrl) {
@@ -293,7 +325,7 @@ export function PrintDocumentsView({
           sessionId,
           group[0].dataUrl,
           group[0].label,
-          150
+          renderDpi
         );
         diskPaths.push(saved.edited_path);
       } else {
@@ -301,13 +333,14 @@ export function PrintDocumentsView({
           group,
           pagesPerSheet as 2 | 4,
           orientation === "landscape",
-          sheetAspect
+          sheetAspect,
+          renderDpi
         );
         const saved = await api.saveBase64Page(
           sessionId,
           composedDataUrl,
           `Sheet ${sIdx + 1}`,
-          200
+          renderDpi
         );
         diskPaths.push(saved.edited_path);
       }
@@ -363,6 +396,7 @@ export function PrintDocumentsView({
           job_name: "AlPrint Manual Duplex (Pass 1 - Odd Pages)",
           margin_mm: resolvedMarginMm,
           scale_percent: scalePercent,
+          dpi: printDpi,
         });
 
         setManualDuplexModal({
@@ -373,6 +407,7 @@ export function PrintDocumentsView({
           marginMm: resolvedMarginMm,
           borderless: marginMode === "none",
           scalePercent,
+          dpi: printDpi,
         });
         onNotify("Pass 1 (odd pages) sent! Follow the flip prompt for Pass 2.");
         return;
@@ -394,6 +429,7 @@ export function PrintDocumentsView({
         job_name: "AlPrint Document",
         margin_mm: resolvedMarginMm,
         scale_percent: scalePercent,
+        dpi: printDpi,
       });
       onActivityUpdated();
       onNotify(msg);
@@ -421,6 +457,7 @@ export function PrintDocumentsView({
         job_name: "AlPrint Manual Duplex (Pass 2 - Even Pages)",
         margin_mm: manualDuplexModal.marginMm,
         scale_percent: manualDuplexModal.scalePercent,
+        dpi: manualDuplexModal.dpi,
       });
       setManualDuplexModal(null);
       onActivityUpdated();
@@ -597,6 +634,20 @@ export function PrintDocumentsView({
                 className="w-full accent-indigo-600 my-1.5"
               />
             </div>
+          </div>
+
+          <div>
+            <label className="font-medium text-slate-500 block mb-1">Print Quality (DPI)</label>
+            <select
+              value={printDpi}
+              onChange={(e) => setPrintDpi(Number(e.target.value))}
+              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+            >
+              <option value={150}>150 DPI (Draft / Fast)</option>
+              <option value={300}>300 DPI (Standard)</option>
+              <option value={600}>600 DPI (High / Sharp)</option>
+              <option value={1200}>1200 DPI (Best / Photo)</option>
+            </select>
           </div>
 
           <div>

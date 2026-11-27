@@ -220,8 +220,8 @@ object PdfAndOcrService {
      * Returns the base pixel dimensions (width x height) for composing a sheet bitmap
      * at ~150 DPI for a selected paper size and orientation.
      */
-    fun getPaperDimensions(paperSize: String, landscape: Boolean): Pair<Int, Int> {
-        val (baseW, baseH) = when (paperSize) {
+    fun getPaperDimensions(paperSize: String, landscape: Boolean, dpi: Int = 150): Pair<Int, Int> {
+        val (base150W, base150H) = when (paperSize) {
             "4x6\"" -> 1200 to 1800      // 4:6 (1:1.50)
             "5x7\"" -> 1250 to 1750      // 5:7 (1:1.40)
             "8x10\"" -> 1400 to 1750     // 8:10 (1:1.25)
@@ -229,7 +229,11 @@ object PdfAndOcrService {
             "Legal" -> 1275 to 2100      // 8.5:14 (1:1.647)
             else -> 1240 to 1754         // A4 210:297 (1:1.414)
         }
-        return if (landscape) (baseH to baseW) else (baseW to baseH)
+        val clampedDpi = dpi.coerceIn(100, 300)
+        val scale = clampedDpi / 150f
+        val scaledW = if (clampedDpi == 150) base150W else (base150W * scale).roundToInt()
+        val scaledH = if (clampedDpi == 150) base150H else (base150H * scale).roundToInt()
+        return if (landscape) (scaledH to scaledW) else (scaledW to scaledH)
     }
 
     /**
@@ -266,9 +270,10 @@ object PdfAndOcrService {
         photo: Bitmap,
         paperSize: String = "4x6\"",
         fillMode: String = "fill",
-        landscape: Boolean = false
+        landscape: Boolean = false,
+        dpi: Int = 150
     ): Bitmap {
-        val (sheetW, sheetH) = getPaperDimensions(paperSize, landscape)
+        val (sheetW, sheetH) = getPaperDimensions(paperSize, landscape, dpi)
         val sheet = Bitmap.createBitmap(sheetW, sheetH, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(sheet)
         canvas.drawColor(Color.WHITE)
@@ -312,7 +317,8 @@ object PdfAndOcrService {
         fitMode: String = "fit", // "fit" or "fill"
         landscape: Boolean = false,
         paperSize: String = "A4",
-        marginMode: String = "minimal" // "minimal", "normal", "none"
+        marginMode: String = "minimal", // "minimal", "normal", "none"
+        dpi: Int = 150
     ): List<Bitmap> {
         if (pages.isEmpty()) return emptyList()
         val nUp = when (pagesPerSheet) {
@@ -320,7 +326,7 @@ object PdfAndOcrService {
             4 -> 4
             else -> 1
         }
-        val (sheetW, sheetH) = getPaperDimensions(paperSize, landscape)
+        val (sheetW, sheetH) = getPaperDimensions(paperSize, landscape, dpi)
         val chunks = pages.chunked(nUp)
         val sheets = mutableListOf<Bitmap>()
 
@@ -449,6 +455,7 @@ object PdfAndOcrService {
         grayscale: Boolean = false,
         landscape: Boolean = false,
         paperSize: String = "A4",
+        dpi: Int = 300,
         onRenderForPageSize: ((targetPaperSize: String, isLandscape: Boolean, isMono: Boolean) -> List<Bitmap>)? = null
     ) {
         if (sheets.isEmpty()) return
@@ -463,6 +470,7 @@ object PdfAndOcrService {
             else -> PrintAttributes.MediaSize.ISO_A4
         }
 
+        val safeDpi = dpi.coerceIn(150, 1200)
         val attrsBuilder = PrintAttributes.Builder()
             .setColorMode(
                 if (grayscale) PrintAttributes.COLOR_MODE_MONOCHROME
@@ -472,6 +480,7 @@ object PdfAndOcrService {
                 if (landscape) baseMediaSize.asLandscape()
                 else baseMediaSize.asPortrait()
             )
+            .setResolution(PrintAttributes.Resolution("alprint_${safeDpi}dpi", "$safeDpi DPI", safeDpi, safeDpi))
 
         when (duplexMode) {
             DuplexMode.LONG_EDGE -> attrsBuilder.setDuplexMode(PrintAttributes.DUPLEX_MODE_LONG_EDGE)

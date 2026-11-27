@@ -109,5 +109,10 @@ class ImageProcessorTest {
         assertEquals(612 to 792, PdfAndOcrService.getPaperPoints("Letter", landscape = false))
         assertEquals(612 to 1008, PdfAndOcrService.getPaperPoints("Legal", landscape = false))
         assertEquals(1008 to 612, PdfAndOcrService.getPaperPoints("Legal", landscape = true))
+
+        val a4150 = PdfAndOcrService.getPaperDimensions("A4", landscape = false, dpi = 150)
+        val a4300 = PdfAndOcrService.getPaperDimensions("A4", landscape = false, dpi = 300)
+        assertEquals(a4150.first * 2, a4300.first)
+        assertEquals(a4150.second * 2, a4300.second)
     }
 }

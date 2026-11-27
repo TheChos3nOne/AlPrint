@@ -157,6 +157,8 @@ pub struct PrintRequest {
     pub margin_mm: Option<f64>,
     #[serde(default)]
     pub scale_percent: Option<u32>,
+    #[serde(default)]
+    pub dpi: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

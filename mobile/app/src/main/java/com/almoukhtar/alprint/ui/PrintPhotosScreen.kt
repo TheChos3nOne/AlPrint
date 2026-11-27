@@ -72,6 +72,7 @@ fun PrintPhotosScreen(
     var landscape by remember { mutableStateOf(false) }
     var extraRotation by remember { mutableIntStateOf(0) }
     var currentPhotoIndex by remember(photos.size) { mutableIntStateOf(0) }
+    var printDpi by remember { mutableIntStateOf(300) }
 
     val photoSizes = listOf("4x6\"", "5x7\"", "8x10\"", "A4", "Letter")
 
@@ -338,15 +339,34 @@ fun PrintPhotosScreen(
                     )
                 }
 
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Quality:", style = MaterialTheme.typography.bodySmall)
+                    for (dpiOption in listOf(150, 300, 600)) {
+                        FilterChip(
+                            selected = printDpi == dpiOption,
+                            onClick = { printDpi = dpiOption },
+                            label = { Text("$dpiOption DPI") }
+                        )
+                    }
+                }
+
                 Button(
                     onClick = {
+                        val composeDpi = minOf(printDpi, 300)
                         val sheets = photos.map { raw ->
                             val rotated = if (extraRotation == 0) raw else ImageProcessor.rotateBitmap(raw, extraRotation)
                             PdfAndOcrService.composePhotoSheet(
                                 photo = rotated,
                                 paperSize = selectedPhotoSize,
                                 fillMode = fillMode,
-                                landscape = landscape
+                                landscape = landscape,
+                                dpi = composeDpi
                             )
                         }
                         PdfAndOcrService.printBitmapsWithAndroidSpooler(
@@ -357,6 +377,7 @@ fun PrintPhotosScreen(
                             grayscale = false,
                             landscape = landscape,
                             paperSize = selectedPhotoSize,
+                            dpi = printDpi,
                             onRenderForPageSize = { targetSize, targetLand, _ ->
                                 photos.map { raw ->
                                     val rotated = if (extraRotation == 0) raw else ImageProcessor.rotateBitmap(raw, extraRotation)
@@ -364,13 +385,14 @@ fun PrintPhotosScreen(
                                         photo = rotated,
                                         paperSize = targetSize,
                                         fillMode = fillMode,
-                                        landscape = targetLand
+                                        landscape = targetLand,
+                                        dpi = composeDpi
                                     )
                                 }
                             }
                         )
                         onLogPrintJob(
-                            "Print Photos ($selectedPhotoSize ${if (landscape) "Landscape" else "Portrait"})",
+                            "Print Photos ($selectedPhotoSize ${if (landscape) "Landscape" else "Portrait"} • $printDpi DPI)",
                             "${photos.size} photo(s) • ${if (fillMode == "fill") "Borderless Fill" else "Fit"}"
                         )
                     },

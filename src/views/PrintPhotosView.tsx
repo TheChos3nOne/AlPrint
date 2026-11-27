@@ -48,6 +48,7 @@ export function PrintPhotosView({
   const [orientation, setOrientation] = useState<"portrait" | "landscape">("portrait");
   const [borderless, setBorderless] = useState(true);
   const [copies, setCopies] = useState(1);
+  const [printDpi, setPrintDpi] = useState(600);
   const [printing, setPrinting] = useState(false);
   const [rotatingId, setRotatingId] = useState<string | null>(null);
   const [optimisticDeg, setOptimisticDeg] = useState(0);
@@ -127,6 +128,7 @@ export function PrintPhotosView({
         job_name: "AlPrint Photo Print",
         margin_mm: borderless ? 0 : 8,
         scale_percent: 100,
+        dpi: printDpi,
       });
       onActivityUpdated();
       onNotify(msg);
@@ -243,6 +245,19 @@ export function PrintPhotosView({
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
               />
             </div>
+          </div>
+
+          <div>
+            <label className="font-medium text-slate-500 block mb-1">Print Quality (DPI)</label>
+            <select
+              value={printDpi}
+              onChange={(e) => setPrintDpi(Number(e.target.value))}
+              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+            >
+              <option value={300}>300 DPI (Fast)</option>
+              <option value={600}>600 DPI (Photo)</option>
+              <option value={1200}>1200 DPI (Best Photo)</option>
+            </select>
           </div>
 
           <div>

@@ -90,6 +90,7 @@ fun PrintDocsScreen(
     var fitMode by remember { mutableStateOf("fit") } // "fit" or "fill"
     var marginMode by remember { mutableStateOf("minimal") } // "minimal", "normal", "none"
     var scalePercent by remember { mutableFloatStateOf(100f) }
+    var printDpi by remember { mutableIntStateOf(300) }
     var duplexMode by remember { mutableStateOf(DuplexMode.ONE_SIDED) }
 
     val paperSizeOptions = listOf("A4", "Letter", "Legal", "4x6\"", "5x7\"", "8x10\"")
@@ -202,7 +203,8 @@ fun PrintDocsScreen(
                             duplexMode = DuplexMode.ONE_SIDED,
                             grayscale = grayscale,
                             landscape = landscape,
-                            paperSize = paperSize
+                            paperSize = paperSize,
+                            dpi = printDpi
                         )
                         onLogPrintJob(
                             "Manual Duplex Pass 2: $docTitle",
@@ -604,13 +606,43 @@ fun PrintDocsScreen(
                     }
                 }
 
+                // Print Quality (DPI)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Quality:", style = MaterialTheme.typography.bodySmall)
+                    for (dpiOption in listOf(150, 300, 600)) {
+                        FilterChip(
+                            selected = printDpi == dpiOption,
+                            onClick = { printDpi = dpiOption },
+                            label = { Text("$dpiOption DPI") }
+                        )
+                    }
+                }
+
                 // Print Button
                 Button(
                     onClick = {
                         if (composedSheets.isEmpty()) return@Button
+                        val composeDpi = minOf(printDpi, 300)
+                        val hiResSheets = PdfAndOcrService.composePrintSheets(
+                            pages = selectedSourceBitmaps(),
+                            pagesPerSheet = pagesPerSheet,
+                            grayscale = grayscale,
+                            scalePercent = scalePercent.roundToInt(),
+                            fitMode = fitMode,
+                            landscape = landscape,
+                            paperSize = paperSize,
+                            marginMode = marginMode,
+                            dpi = composeDpi
+                        )
                         if (duplexMode == DuplexMode.MANUAL_TWO_PASS) {
-                            val (pass1Odd, pass2Even) = PdfAndOcrService.splitManualDuplexPasses(composedSheets)
-                            manualAddedBlankPage = (composedSheets.size % 2 == 1)
+                            val (pass1Odd, pass2Even) = PdfAndOcrService.splitManualDuplexPasses(hiResSheets)
+                            manualAddedBlankPage = (hiResSheets.size % 2 == 1)
                             manualPass2Sheets = pass2Even
                             PdfAndOcrService.printBitmapsWithAndroidSpooler(
                                 context = context,
@@ -619,21 +651,23 @@ fun PrintDocsScreen(
                                 duplexMode = DuplexMode.ONE_SIDED,
                                 grayscale = grayscale,
                                 landscape = landscape,
-                                paperSize = paperSize
+                                paperSize = paperSize,
+                                dpi = printDpi
                             )
                             onLogPrintJob(
                                 "Manual Duplex Pass 1: $docTitle",
-                                "${pass1Odd.size} front sheet(s) • $paperSize"
+                                "${pass1Odd.size} front sheet(s) • $paperSize • $printDpi DPI"
                             )
                         } else {
                             PdfAndOcrService.printBitmapsWithAndroidSpooler(
                                 context = context,
                                 jobName = docTitle,
-                                sheets = composedSheets,
+                                sheets = hiResSheets,
                                 duplexMode = duplexMode,
                                 grayscale = grayscale,
                                 landscape = landscape,
                                 paperSize = paperSize,
+                                dpi = printDpi,
                                 onRenderForPageSize = { targetSize, targetLand, targetMono ->
                                     PdfAndOcrService.composePrintSheets(
                                         pages = selectedSourceBitmaps(),
@@ -643,13 +677,14 @@ fun PrintDocsScreen(
                                         fitMode = fitMode,
                                         landscape = targetLand,
                                         paperSize = targetSize,
-                                        marginMode = marginMode
+                                        marginMode = marginMode,
+                                        dpi = composeDpi
                                     )
                                 }
                             )
                             onLogPrintJob(
                                 "Print Document: $docTitle",
-                                "${composedSheets.size} sheet(s) • $paperSize • ${duplexMode.label}"
+                                "${hiResSheets.size} sheet(s) • $paperSize • $printDpi DPI • ${duplexMode.label}"
                             )
                         }
                     },
