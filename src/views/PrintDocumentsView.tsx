@@ -226,7 +226,7 @@ export function PrintDocumentsView({
         const lower = p.toLowerCase();
         const fname = p.split(/[\\/]/).pop() ?? "Document";
         if (lower.endsWith(".pdf")) {
-          const rendered = await rasterizePdfFile(p, 2.0);
+          const rendered = await rasterizePdfFile(p, 3.0);
           for (const r of rendered) {
             loaded.push({
               id: `${p}-${r.pageNumber}`,
@@ -576,9 +576,9 @@ export function PrintDocumentsView({
                 }
                 className="w-full px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
               >
-                <option value="minimal">Minimal (~3 mm)</option>
-                <option value="normal">Standard (12 mm)</option>
-                <option value="none">None / Borderless</option>
+                <option value="minimal">Minimal (Fit Printable Area)</option>
+                <option value="normal">Standard (+12 mm Margin)</option>
+                <option value="none">None (Use PDF's Own Margins / 1:1)</option>
               </select>
             </div>
 

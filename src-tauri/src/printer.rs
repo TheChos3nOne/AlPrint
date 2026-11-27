@@ -84,8 +84,9 @@ $doc.add_PrintPage({
     }
     $path = $script:paths[$script:pageIdx]
     $img = [System.Drawing.Image]::FromFile($path)
+    $g = $e.Graphics
+    $gState = $g.Save()
     try {
-        $g = $e.Graphics
         $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
         $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
         $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
@@ -94,13 +95,23 @@ $doc.add_PrintPage({
 
         $pa = $e.PageSettings.PrintableArea
         if ($e.PageSettings.Landscape) {
+            $hardX = [float]$pa.Y
+            $hardY = [float]$pa.X
             $printable = New-Object System.Drawing.RectangleF($pa.Y, $pa.X, $pa.Height, $pa.Width)
         } else {
+            $hardX = [float]$pa.X
+            $hardY = [float]$pa.Y
             $printable = New-Object System.Drawing.RectangleF($pa.X, $pa.Y, $pa.Width, $pa.Height)
         }
         if ($printable.Width -le 0 -or $printable.Height -le 0) {
             $printable = $pageBounds
+            $hardX = [float]0.0
+            $hardY = [float]0.0
         }
+
+        # Translate GDI+ world coordinates so (0, 0) maps to the physical paper corner
+        # instead of (HardMarginX, HardMarginY), preventing right/down page shift & clipping
+        $g.TranslateTransform(-$hardX, -$hardY)
 
         if ($script:borderless -or ($null -ne $script:marginMm -and [double]$script:marginMm -le 0.01)) {
             $bounds = $pageBounds
@@ -143,7 +154,6 @@ $doc.add_PrintPage({
         $dx = [float]($bounds.X + ($bw - $dw) / 2.0)
         $dy = [float]($bounds.Y + ($bh - $dh) / 2.0)
 
-        $prevClip = $g.Clip
         $g.SetClip($bounds)
         $destRect = New-Object System.Drawing.RectangleF($dx, $dy, $dw, $dh)
         if ($script:forceGray) {
@@ -159,10 +169,11 @@ $doc.add_PrintPage({
             $g.DrawImage($img, [System.Drawing.Rectangle]::Round($destRect), 0, 0, $img.Width, $img.Height, [System.Drawing.GraphicsUnit]::Pixel, $ia)
             $ia.Dispose()
         } else {
-            $g.DrawImage($img, $destRect)
+            $srcRect = New-Object System.Drawing.RectangleF(0, 0, [float]$img.Width, [float]$img.Height)
+            $g.DrawImage($img, $destRect, $srcRect, [System.Drawing.GraphicsUnit]::Pixel)
         }
-        $g.Clip = $prevClip
     } finally {
+        $g.Restore($gState)
         $img.Dispose()
     }
 
