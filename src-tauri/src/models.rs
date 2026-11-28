@@ -159,6 +159,8 @@ pub struct PrintRequest {
     pub scale_percent: Option<u32>,
     #[serde(default)]
     pub dpi: Option<u32>,
+    #[serde(default)]
+    pub rotate_180: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

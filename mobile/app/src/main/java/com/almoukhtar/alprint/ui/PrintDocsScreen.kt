@@ -92,6 +92,8 @@ fun PrintDocsScreen(
     var scalePercent by remember { mutableFloatStateOf(100f) }
     var printDpi by remember { mutableIntStateOf(300) }
     var duplexMode by remember { mutableStateOf(DuplexMode.ONE_SIDED) }
+    var manualFlipEdge by remember { mutableStateOf("long_edge") } // "long_edge" | "short_edge"
+    var manualReversePass2 by remember { mutableStateOf(false) }
 
     val paperSizeOptions = listOf("A4", "Letter", "Legal", "4x6\"", "5x7\"", "8x10\"")
     val (sheetW, sheetH) = remember(paperSize, landscape) {
@@ -110,6 +112,8 @@ fun PrintDocsScreen(
     // Guided Manual 2-Pass Duplex modal state
     var manualPass2Sheets by remember { mutableStateOf<List<Bitmap>?>(null) }
     var manualAddedBlankPage by remember { mutableStateOf(false) }
+    var manualPass2OrderLabel by remember { mutableStateOf("") }
+    var manualPass2Rotated180 by remember { mutableStateOf(true) }
 
     fun selectedSourceBitmaps(): List<Bitmap> {
         val indices = if (rangeMode == "custom") {
@@ -170,12 +174,39 @@ fun PrintDocsScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        text = "Pass 1 (Odd Front Pages) has been sent to the print spooler. Once your HP Smart Tank finishes printing Pass 1:"
+                        text = "Pass 1 (Odd Front Pages) has been sent to the print spooler."
                     )
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = if (manualPass2Rotated180) {
+                                    "Long Edge · Book Flip (Pass 2 rotated 180°)"
+                                } else {
+                                    "Short Edge · Notepad Flip (0°)"
+                                },
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            Text(
+                                text = "Pass 2 order: $manualPass2OrderLabel",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                    }
                     Text(
-                        text = "1. Take the printed stack from the output tray.\n" +
-                            "2. Flip the entire stack over (printed side facing down/back into the top rear input tray).\n" +
-                            "3. Tap 'Print Pass 2 (Even Back Pages)' below."
+                        text = "1. Wait until all Pass 1 sheets finish printing.\n" +
+                            "2. Lift the printed stack from the output tray as-is (do NOT reorder or turn pages left-to-right).\n" +
+                            "3. Tip the stack straight back into the rear input tray with the printed side facing away (back) and the blank side facing you (the edge closest to the printer goes down into the tray).\n" +
+                            "4. Tap 'Print Pass 2' below."
                     )
                     if (manualAddedBlankPage) {
                         Surface(
@@ -425,6 +456,38 @@ fun PrintDocsScreen(
                         onClick = { duplexMode = DuplexMode.MANUAL_TWO_PASS }
                     )
                 }
+                if (duplexMode == DuplexMode.MANUAL_TWO_PASS) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "Manual Flip Binding",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = manualFlipEdge == "long_edge",
+                                onClick = { manualFlipEdge = "long_edge" },
+                                label = { Text("Long Edge (Book · 180°)") }
+                            )
+                            FilterChip(
+                                selected = manualFlipEdge == "short_edge",
+                                onClick = { manualFlipEdge = "short_edge" },
+                                label = { Text("Short Edge (Notepad · 0°)") }
+                            )
+                        }
+                        FilterChip(
+                            selected = manualReversePass2,
+                            onClick = { manualReversePass2 = !manualReversePass2 },
+                            label = { Text("Reverse Pass 2 Order (Front-Tray)") }
+                        )
+                    }
+                }
             }
         }
 
@@ -641,8 +704,21 @@ fun PrintDocsScreen(
                             dpi = composeDpi
                         )
                         if (duplexMode == DuplexMode.MANUAL_TWO_PASS) {
-                            val (pass1Odd, pass2Even) = PdfAndOcrService.splitManualDuplexPasses(hiResSheets)
+                            val rotatePass2 = (manualFlipEdge == "long_edge")
+                            val (_, pass2Order) = PdfAndOcrService.computeManualDuplexOrder(
+                                totalSheets = hiResSheets.size,
+                                reversePass2 = manualReversePass2
+                            )
+                            val (pass1Odd, pass2Even) = PdfAndOcrService.splitManualDuplexPasses(
+                                sheets = hiResSheets,
+                                rotatePass2_180 = rotatePass2,
+                                reversePass2 = manualReversePass2
+                            )
                             manualAddedBlankPage = (hiResSheets.size % 2 == 1)
+                            manualPass2OrderLabel = pass2Order.joinToString(", ") { idx ->
+                                if (idx == null) "Blank" else "${idx + 1}"
+                            }
+                            manualPass2Rotated180 = rotatePass2
                             manualPass2Sheets = pass2Even
                             PdfAndOcrService.printBitmapsWithAndroidSpooler(
                                 context = context,

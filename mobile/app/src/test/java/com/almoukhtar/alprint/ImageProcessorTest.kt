@@ -115,4 +115,27 @@ class ImageProcessorTest {
         assertEquals(a4150.first * 2, a4300.first)
         assertEquals(a4150.second * 2, a4300.second)
     }
+
+    @Test
+    fun testComputeManualDuplexOrderForRearTrayAndReversed() {
+        // 4 sheets, rear-tray forward Pass 2: Pass 1 = [0, 2], Pass 2 = [1, 3]
+        val (p1Even, p2Even) = PdfAndOcrService.computeManualDuplexOrder(4, reversePass2 = false)
+        assertEquals(listOf(0, 2), p1Even)
+        assertEquals(listOf<Int?>(1, 3), p2Even)
+
+        // 5 sheets, rear-tray forward Pass 2: Pass 1 = [0, 2, 4], Pass 2 = [1, 3, null]
+        val (p1Odd, p2Odd) = PdfAndOcrService.computeManualDuplexOrder(5, reversePass2 = false)
+        assertEquals(listOf(0, 2, 4), p1Odd)
+        assertEquals(listOf<Int?>(1, 3, null), p2Odd)
+
+        // 5 sheets, reversed Pass 2 (front-cassette / face-down): Pass 1 = [0, 2, 4], Pass 2 = [null, 3, 1]
+        val (p1Rev, p2Rev) = PdfAndOcrService.computeManualDuplexOrder(5, reversePass2 = true)
+        assertEquals(listOf(0, 2, 4), p1Rev)
+        assertEquals(listOf<Int?>(null, 3, 1), p2Rev)
+
+        // 0 sheets: empty
+        val (p1Zero, p2Zero) = PdfAndOcrService.computeManualDuplexOrder(0, reversePass2 = false)
+        assertTrue(p1Zero.isEmpty())
+        assertTrue(p2Zero.isEmpty())
+    }
 }

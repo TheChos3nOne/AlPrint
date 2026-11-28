@@ -165,6 +165,8 @@ export function PrintDocumentsView({
   const [duplexMode, setDuplexMode] = useState<
     "simplex" | "long_edge" | "short_edge" | "manual_duplex"
   >("simplex");
+  const [manualFlipEdge, setManualFlipEdge] = useState<"long_edge" | "short_edge">("long_edge");
+  const [manualReversePass2, setManualReversePass2] = useState(false);
 
   const [printing, setPrinting] = useState(false);
   const [manualDuplexModal, setManualDuplexModal] = useState<{
@@ -176,6 +178,10 @@ export function PrintDocumentsView({
     borderless: boolean;
     scalePercent: number;
     dpi: number;
+    flipEdge: "long_edge" | "short_edge";
+    rotate180: boolean;
+    reversePass2: boolean;
+    pass2PageNumbers: string;
   } | null>(null);
 
   const portraitMm = useMemo(
@@ -381,7 +387,19 @@ export function PrintDocumentsView({
         }
 
         const oddPaths = paddedPaths.filter((_, i) => i % 2 === 0);
-        const evenPaths = paddedPaths.filter((_, i) => i % 2 === 1).reverse();
+        const evenEntries = paddedPaths
+          .map((path, i) => ({
+            path,
+            pageNum: i + 1,
+            isBlank: addedBlankBack && i === paddedPaths.length - 1,
+          }))
+          .filter((_, i) => i % 2 === 1);
+        const orderedEven = manualReversePass2 ? [...evenEntries].reverse() : evenEntries;
+        const evenPaths = orderedEven.map((e) => e.path);
+        const pass2PageNumbers = orderedEven
+          .map((e) => (e.isBlank ? "Blank" : String(e.pageNum)))
+          .join(", ");
+        const rotate180 = manualFlipEdge === "long_edge";
 
         await api.printPages({
           printer_name: activePrinter.name,
@@ -397,6 +415,7 @@ export function PrintDocumentsView({
           margin_mm: resolvedMarginMm,
           scale_percent: scalePercent,
           dpi: printDpi,
+          rotate_180: false,
         });
 
         setManualDuplexModal({
@@ -408,8 +427,12 @@ export function PrintDocumentsView({
           borderless: marginMode === "none",
           scalePercent,
           dpi: printDpi,
+          flipEdge: manualFlipEdge,
+          rotate180,
+          reversePass2: manualReversePass2,
+          pass2PageNumbers,
         });
-        onNotify("Pass 1 (odd pages) sent! Follow the flip prompt for Pass 2.");
+        onNotify("Pass 1 (odd pages) sent! Follow the reload prompt for Pass 2.");
         return;
       }
 
@@ -458,6 +481,7 @@ export function PrintDocumentsView({
         margin_mm: manualDuplexModal.marginMm,
         scale_percent: manualDuplexModal.scalePercent,
         dpi: manualDuplexModal.dpi,
+        rotate_180: manualDuplexModal.rotate180,
       });
       setManualDuplexModal(null);
       onActivityUpdated();
@@ -749,9 +773,46 @@ export function PrintDocumentsView({
               ))}
             </div>
             {duplexMode === "manual_duplex" && (
-              <p className="text-[11px] text-indigo-600 dark:text-indigo-400 mt-1.5">
-                Prints odd pages first, then guides you to flip the stack for even pages.
-              </p>
+              <div className="mt-2 p-2.5 rounded-xl bg-indigo-50/70 dark:bg-indigo-500/10 border border-indigo-200/80 dark:border-indigo-700/50 space-y-2">
+                <div className="text-[11px] font-semibold text-indigo-700 dark:text-indigo-300">
+                  Manual Flip Binding
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setManualFlipEdge("long_edge")}
+                    className={`p-2 rounded-lg border text-left transition ${
+                      manualFlipEdge === "long_edge"
+                        ? "border-indigo-500 bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-300 shadow-xs"
+                        : "border-slate-200 dark:border-slate-700 hover:bg-white/60 dark:hover:bg-slate-800/60"
+                    }`}
+                  >
+                    <div className="font-semibold leading-tight">Long Edge (Book)</div>
+                    <div className="text-[10px] opacity-75">Auto-rotates Pass 2 180°</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setManualFlipEdge("short_edge")}
+                    className={`p-2 rounded-lg border text-left transition ${
+                      manualFlipEdge === "short_edge"
+                        ? "border-indigo-500 bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-300 shadow-xs"
+                        : "border-slate-200 dark:border-slate-700 hover:bg-white/60 dark:hover:bg-slate-800/60"
+                    }`}
+                  >
+                    <div className="font-semibold leading-tight">Short Edge (Notepad)</div>
+                    <div className="text-[10px] opacity-75">No rotation (0°)</div>
+                  </button>
+                </div>
+                <label className="flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={manualReversePass2}
+                    onChange={(e) => setManualReversePass2(e.target.checked)}
+                    className="rounded accent-indigo-600"
+                  />
+                  <span>Reverse Pass 2 order (front-tray / face-down printers)</span>
+                </label>
+              </div>
             )}
           </div>
         </div>
@@ -902,17 +963,30 @@ export function PrintDocumentsView({
                 <CheckCircle2 className="w-4 h-4" /> Pass 1 ({manualDuplexModal.pass1Paths.length}{" "}
                 odd page(s)) sent to printer!
               </div>
+              <div className="text-[11px] font-medium text-indigo-700 dark:text-indigo-300 bg-white/70 dark:bg-slate-900/50 rounded-lg px-2.5 py-1.5 border border-indigo-200/70 dark:border-indigo-700/60">
+                <div>
+                  {manualDuplexModal.flipEdge === "long_edge"
+                    ? "Long Edge · Book Flip (Pass 2 auto-rotated 180°)"
+                    : "Short Edge · Notepad Flip (0°)"}
+                </div>
+                <div className="opacity-80">Pass 2 order: {manualDuplexModal.pass2PageNumbers}</div>
+              </div>
               <ol className="list-decimal list-inside space-y-1.5 leading-relaxed">
                 <li>Wait until all Pass 1 sheets finish printing.</li>
-                <li>Take the printed stack from the output tray.</li>
                 <li>
-                  Flip the stack over (printed side facing away/back depending on your rear input
-                  tray) and re-insert into the paper tray.
+                  Lift the printed stack from the output tray as-is (do <strong>not</strong> reorder
+                  or turn pages left-to-right).
                 </li>
                 <li>
-                  Click <strong>Print Pass 2</strong> below to print the{" "}
-                  {manualDuplexModal.pass2Paths.length} reverse side(s)
-                  {manualDuplexModal.addedBlankBack ? " (includes blank back sheet)" : ""}.
+                  Tip the stack straight back into the rear input tray with the{" "}
+                  <strong>printed side facing away (back)</strong> and the{" "}
+                  <strong>blank side facing you</strong> (the edge closest to the printer goes down
+                  into the tray).
+                </li>
+                <li>
+                  Click <strong>Print Pass 2</strong> below to print the reverse sides (
+                  {manualDuplexModal.pass2PageNumbers})
+                  {manualDuplexModal.addedBlankBack ? " — includes blank back sheet" : ""}.
                 </li>
               </ol>
               {manualDuplexModal.addedBlankBack && (

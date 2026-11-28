@@ -113,6 +113,7 @@ $script:forceGray = (-not [bool]$cfg.color)
 $script:marginMm = $cfg.margin_mm
 $rawScale = if ($null -ne $cfg.scale_percent) { [int]$cfg.scale_percent } else { 100 }
 $script:scalePct = [math]::Max(25, [math]::Min(100, $rawScale))
+$script:rotate180 = [bool]$cfg.rotate_180
 
 $doc.add_PrintPage({
     param($sender, $e)
@@ -122,6 +123,9 @@ $doc.add_PrintPage({
     }
     $path = $script:paths[$script:pageIdx]
     $img = [System.Drawing.Image]::FromFile($path)
+    if ($script:rotate180) {
+        $img.RotateFlip([System.Drawing.RotateFlipType]::Rotate180FlipNone)
+    }
     $g = $e.Graphics
     $gState = $g.Save()
     try {
@@ -246,6 +250,7 @@ pub fn print_test_page(printer_name: &str) -> Result<String, String> {
         margin_mm: Some(8.0),
         scale_percent: Some(100),
         dpi: Some(300),
+        rotate_180: None,
     };
 
     let res = print_pages(req);

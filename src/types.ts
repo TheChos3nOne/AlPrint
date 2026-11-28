@@ -138,6 +138,7 @@ export interface PrintRequest {
   margin_mm?: number;
   scale_percent?: number;
   dpi?: number;
+  rotate_180?: boolean;
 }
 
 export interface DiagnosticCheck {

@@ -394,25 +394,59 @@ object PdfAndOcrService {
     }
 
     /**
-     * Splits composed sheets into Pass 1 (odd sheets: 1, 3, 5...) and Pass 2 (even sheets: 2, 4, 6...).
-     * When total sheets is odd (e.g. 1 or 3), automatically appends a blank white sheet to Pass 2
-     * so the user never has to figure out which sheet stays unprinted when flipping the stack!
+     * Computes 0-based Pass 1 (odd sheets) and Pass 2 (even sheets, with `null` indicating an
+     * automatically appended blank white back sheet when [totalSheets] is odd) indices.
+     * Rear-feed face-up printers feed sheet 1 first when tipping the output stack straight into
+     * the rear tray, so [reversePass2] defaults to `false`; front-cassette/face-down printers
+     * can enable [reversePass2] = true.
      */
-    fun splitManualDuplexPasses(sheets: List<Bitmap>): Pair<List<Bitmap>, List<Bitmap>> {
-        val pass1Odd = mutableListOf<Bitmap>()
-        val pass2Even = mutableListOf<Bitmap>()
-        sheets.forEachIndexed { idx, sheet ->
+    fun computeManualDuplexOrder(
+        totalSheets: Int,
+        reversePass2: Boolean = false
+    ): Pair<List<Int>, List<Int?>> {
+        if (totalSheets <= 0) return Pair(emptyList(), emptyList())
+        val pass1Odd = mutableListOf<Int>()
+        val pass2Even = mutableListOf<Int?>()
+        for (idx in 0 until totalSheets) {
             if (idx % 2 == 0) {
-                pass1Odd.add(sheet)
+                pass1Odd.add(idx)
             } else {
-                pass2Even.add(sheet)
+                pass2Even.add(idx)
             }
         }
-        if (sheets.size % 2 == 1 && sheets.isNotEmpty()) {
-            val sample = sheets.first()
-            val blankBack = Bitmap.createBitmap(sample.width, sample.height, Bitmap.Config.ARGB_8888)
-            Canvas(blankBack).drawColor(Color.WHITE)
-            pass2Even.add(blankBack)
+        if (totalSheets % 2 == 1) {
+            pass2Even.add(null)
+        }
+        if (reversePass2) {
+            pass2Even.reverse()
+        }
+        return Pair(pass1Odd, pass2Even)
+    }
+
+    /**
+     * Splits composed sheets into Pass 1 (odd sheets: 1, 3, 5...) and Pass 2 (even sheets: 2, 4, 6...).
+     * When total sheets is odd (e.g. 1 or 3), automatically appends a blank white sheet to Pass 2
+     * so the user never has to figure out which sheet stays unprinted when reloading the stack.
+     * For Long-Edge (Book Flip) on rear-feed printers, Pass 2 pages are auto-rotated 180°.
+     */
+    fun splitManualDuplexPasses(
+        sheets: List<Bitmap>,
+        rotatePass2_180: Boolean = true,
+        reversePass2: Boolean = false
+    ): Pair<List<Bitmap>, List<Bitmap>> {
+        if (sheets.isEmpty()) return Pair(emptyList(), emptyList())
+        val (pass1Indices, pass2Indices) = computeManualDuplexOrder(sheets.size, reversePass2)
+        val pass1Odd = pass1Indices.map { sheets[it] }
+        val sample = sheets.first()
+        val pass2Even = pass2Indices.map { idx ->
+            if (idx == null) {
+                Bitmap.createBitmap(sample.width, sample.height, Bitmap.Config.ARGB_8888).apply {
+                    Canvas(this).drawColor(Color.WHITE)
+                }
+            } else {
+                val bmp = sheets[idx]
+                if (rotatePass2_180) ImageProcessor.rotateBitmap(bmp, 180) else bmp
+            }
         }
         return Pair(pass1Odd, pass2Even)
     }
